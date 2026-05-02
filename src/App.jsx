@@ -11,8 +11,19 @@ function App() {
   const [exchangeRate, setExchangeRate] = useState(0.92);
 
   useEffect(() => {
-    const saved = localStorage.getItem('billchill_data');
-    if (saved) setSubscriptions(JSON.parse(saved));
+    const loadData = async () => {
+      try {
+        const response = await fetch('http://localhost:3000/subscriptions');
+        if (response.ok) {
+          const data = await response.json();
+          setSubscriptions(data);
+        }
+      } catch (error) {
+        console.error("Failed to load from backend:", error);
+      }
+    };
+
+    loadData();
     fetchRate('EUR');
   }, []);
 
@@ -31,11 +42,12 @@ function App() {
     const newSubData = {
       name: name,
       cost: parseFloat(amount),
-      next_billing_date: dueDate
+      next_billing_date: dueDate,
+      category: category // Make sure this is included!
     };
 
     try {
-      const response = await fetch('/subscriptions', {
+      const response = await fetch('http://localhost:3000/subscriptions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newSubData),
@@ -43,44 +55,49 @@ function App() {
 
       if (response.ok) {
         const savedSub = await response.json();
-        setSubscriptions([...subscriptions, { ...savedSub, amount: savedSub.cost, id: Date.now() }]);
-        setName(''); setAmount(''); setDueDate('');
+        // ✅ SUCCESS: Only add to screen if the database accepted it
+        setSubscriptions([...subscriptions, savedSub]);
+        
+        // Clear inputs
+        setName('');
+        setAmount('');
+        setDueDate('');
       } else {
-        // If server gives an error, we still want to see it on our screen!
-        throw new Error("Server error");
+        alert("Server error: Database didn't save the bill.");
       }
     } catch (error) {
-      console.log("Using fallback logic to update UI.");
-      
-      const localFallback = { 
-        id: Date.now(), 
-        name, 
-        amount: parseFloat(amount), 
-        category, 
-        dueDate 
-      };
-      
-      // THIS IS THE KEY LINE: This tells the screen to refresh
-      setSubscriptions([...subscriptions, localFallback]);
-      
-      // Clear the input boxes
-      setName(''); 
-      setAmount(''); 
-      setDueDate('');
+      console.error("Connection failed!", error);
+      alert("Cannot connect to server. Is the backend running on Port 3000?");
     }
   };
  
   
 
-  const deleteSub = (id) => setSubscriptions(subscriptions.filter(s => s.id !== id));
-  const totalMonthly = subscriptions.reduce((acc, curr) => acc + curr.amount, 0);
+  const deleteSub = async (id) => {
+    try {
+      // This tells the backend to delete the record
+      const response = await fetch(`http://localhost:3000/subscriptions/${id}`, {
+        method: 'DELETE',
+      });
+  
+      if (response.ok) {
+        // This removes it from your screen instantly
+        setSubscriptions((prev) => prev.filter((s) => s.id !== id));
+      }
+    } catch (error) {
+      console.error("Delete failed:", error);
+      // Local fallback so it still works if backend is offline
+      setSubscriptions((prev) => prev.filter((s) => s.id !== id));
+    }
+  };
+  const totalMonthly = subscriptions.reduce((acc, curr) => acc + (curr.cost || curr.amount), 0);
 
   // Data for the Analytics Dashboard 
   const chartData = [
-    { name: 'Entertainment', value: subscriptions.filter(s => s.category === 'Entertainment').reduce((a, b) => a + b.amount, 0) },
-    { name: 'Utilities', value: subscriptions.filter(s => s.category === 'Utilities').reduce((a, b) => a + b.amount, 0) },
-    { name: 'Software', value: subscriptions.filter(s => s.category === 'Software').reduce((a, b) => a + b.amount, 0) },
-    { name: 'Health', value: subscriptions.filter(s => s.category === 'Health').reduce((a, b) => a + b.amount, 0) },
+    { name: 'Entertainment', value: subscriptions.filter(s => s.category === 'Entertainment').reduce((a, b) => a + (b.cost || b.amount), 0) },
+    { name: 'Utilities', value: subscriptions.filter(s => s.category === 'Utilities').reduce((a, b) => a + (b.cost || b.amount), 0) },
+    { name: 'Software', value: subscriptions.filter(s => s.category === 'Software').reduce((a, b) => a + (b.cost || b.amount), 0) },
+    { name: 'Health', value: subscriptions.filter(s => s.category === 'Health').reduce((a, b) => a + (b.cost || b.amount), 0) },
   ].filter(item => item.value > 0);
 
   const COLORS = ['#2563eb', '#7c3aed', '#db2777', '#059669'];
